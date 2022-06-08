@@ -1,5 +1,5 @@
 from packaging import version
-from typing import Optional, Union, Callable
+from typing import Optional, Union, Callable, Dict, Any
 import importlib.util
 from itertools import chain
 from functools import partial
@@ -13,7 +13,7 @@ from jax import pmap, jit
 import flax
 from flax.jax_utils import unreplicate, replicate
 from flax.training.train_state import TrainState
-from flax.training.common_utils import onehot, shard
+from flax.training.common_utils import onehot
 
 from optax import softmax_cross_entropy
 
@@ -23,11 +23,14 @@ from datasets import load_metric
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset, IterableDataset
 
+from transformers.modeling_flax_utils import FlaxPreTrainedModel
 from transformers.trainer_utils import RemoveColumnsCollator
 from transformers.utils import logging
+from transformers import TrainingArguments
 
 from dataloader import BatchLoader
 from utils import *
+
 
 logger = logging.get_logger(__name__)
 _datasets_available = importlib.util.find_spec("datasets") is not None
@@ -39,8 +42,8 @@ def logit_function(logits):
 
 class FlaxTrainer(object):
     def __init__(self,
-                 model,
-                 args,
+                 model: FlaxPreTrainedModel,
+                 args: TrainingArguments,
                  rng_seed: int = 12,
                  train_dataset: Optional[Union[Dataset, IterableDataset]] = None,
                  eval_dataset: Optional[Union[Dataset, IterableDataset]] = None):
@@ -72,6 +75,21 @@ class FlaxTrainer(object):
             tx=self.optimizer
         )
 
+    @partial(jit, static_argnums=0)
+    def train_step(self, state: TrainState, batch:Dict[Any], dropout_rng):
+        dropout_rng, new_dropout_rng = jax.random.split(dropout_rng)
+        labels = batch.pop("labels", None)
+
+        def loss_fn(params):
+            logits = state.apply_fn(**batch, params=params, dropout_rng=dropout_rng, train=True)[0]
+            onehot_labels = onehot(labels, logits.shape[-1])
+            return softmax_cross_entropy(logits, onehot_labels).mean()
+
+        loss, grad = jax.value_and_grad(loss_fn)(state.params)
+        new_state = state.apply_gradients(grads=pmean(grad, "batch"))
+        self.scheduler(state.step)
+        return new_state, pmean({"loss": loss}, axis_name="batch"), new_dropout_rng
+
     def train(self, train_dataset: Optional[Union[Dataset, IterableDataset]] = None, batch_size: int = 16):
         state = replicate(self.state)
         try:
@@ -79,37 +97,44 @@ class FlaxTrainer(object):
                 self.train_batch_loader = BatchLoader(train_dataset, batch_size)
 
             for epoch in range(int(self.args.num_train_epochs)):
-                parallel_train_step = pmap(self.train_step, "batch", donate_argnums=(0,))
                 updates, dropout_rngs = [], jax.random.split(self.rng, jax.local_device_count())
+                u_append = updates.append
 
+                parallel_train_step = pmap(self.train_step, "batch", donate_argnums=(0,))
                 with tqdm(total=len(self.train_batch_loader), leave=True, position=0) as pbar:
                     for batch in self.train_batch_loader:
                         state, train_metrics, dropout_rngs = parallel_train_step(state, batch, dropout_rngs)
-                        updates.append(train_metrics)
+                        u_append(train_metrics)
                         pbar.update(1)
                 pbar.set_postfix(get_updates(epoch + 1, updates))
         except Exception as e:
-            logger.info(e)
+            logger.error(e)
         finally:
             self.state = unreplicate(state)
 
     @partial(jit, static_argnums=0)
-    def train_step(self, state, batch, dropout_rng):
-        dropout_rng, new_dropout_rng = jax.random.split(dropout_rng)
-        labels = batch.pop("labels", None)
+    def eval_step(self, state, batch):
+        logits = state.apply_fn(**batch, params=state.params, train=False)[0]
+        return logit_function(logits)
 
-        @jit
-        def loss_fn(params):
-            logits = state.apply_fn(**batch, params=params, dropout_rng=dropout_rng, train=True)[0]
-            onehot_labels = onehot(labels, logits.shape[-1])
-            return softmax_cross_entropy(logits, onehot_labels).mean()
+    def evaluate(self, eval_dataset: Optional[Union[Dataset, IterableDataset]] = None):
+        state = flax.jax_utils.replicate(self.state)
+        if eval_dataset:
+            self.eval_batch_loader = BatchLoader(eval_dataset, self.args.per_device_eval_batch_size)
 
-        grad_func = jax.value_and_grad(loss_fn)
-        loss, grad = grad_func(state.params)
-        grad = pmean(grad, "batch")
-        new_state = state.apply_gradients(grads=grad)
-        self.scheduler(state.step)
-        return new_state, pmean({"loss": loss}, axis_name="batch"), new_dropout_rng
+        metric_fn = load_metric('glue', "stsb")
+        parallel_eval_step = jax.pmap(self.eval_step, axis_name="batch")
+        with tqdm(total=len(self.eval_batch_loader), desc="Evaluating...", leave=True, position=0) as pbar:
+            for batch in self.eval_batch_loader:
+                labels = batch.pop("labels")
+                predictions = parallel_eval_step(state, batch)
+                metric_fn.add_batch(predictions=chain(*predictions), references=chain(*labels))
+                pbar.update(1)
+
+            eval_metric = metric_fn.compute()
+            eval_metric = {k: v for k, v in eval_metric.items()}
+            pbar.set_postfix({k: v for k, v in eval_metric.items()})
+        self.state = flax.jax_utils.unreplicate(state)
 
     def get_train_dataloader(self) -> DataLoader:
 
@@ -166,27 +191,3 @@ class FlaxTrainer(object):
             return dataset
         else:
             return dataset.remove_columns(ignored_columns)
-
-    @partial(jit, static_argnums=0)
-    def eval_step(self, state, batch):
-        logits = state.apply_fn(**batch, params=state.params, train=False)[0]
-        return logit_function(logits)
-
-    def evaluate(self, eval_dataset: Optional[Union[Dataset, IterableDataset]] = None):
-        state = flax.jax_utils.replicate(self.state)
-        if eval_dataset:
-            self.eval_batch_loader = BatchLoader(eval_dataset, self.args.per_device_eval_batch_size)
-
-        metric_fn = load_metric('glue', "stsb")
-        parallel_eval_step = jax.pmap(self.eval_step, axis_name="batch")
-        with tqdm(total=len(self.eval_batch_loader), desc="Evaluating...", leave=True, position=0) as pbar:
-            for batch in self.eval_batch_loader:
-                labels = batch.pop("labels")
-                predictions = parallel_eval_step(state, batch)
-                metric_fn.add_batch(predictions=chain(*predictions), references=chain(*labels))
-                pbar.update(1)
-
-            eval_metric = metric_fn.compute()
-            eval_metric = {k: v for k, v in eval_metric.items()}
-            pbar.set_postfix({k: v for k, v in eval_metric.items()})
-        self.state = flax.jax_utils.unreplicate(state)
