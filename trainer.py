@@ -1,10 +1,11 @@
 from packaging import version
-from typing import Optional, Union, Callable, Dict, Any
+from typing import Optional, Union, Callable, Dict, Any, List
 import importlib.util
 from itertools import chain
 from functools import partial
 from tqdm import tqdm
-
+import warnings
+import os
 
 import jax
 from jax.lax import pmean
@@ -20,13 +21,33 @@ from optax import softmax_cross_entropy
 import datasets
 from datasets import load_metric
 
+import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset, IterableDataset
 
-from transformers.modeling_flax_utils import FlaxPreTrainedModel
-from transformers.trainer_utils import RemoveColumnsCollator
-from transformers.utils import logging
-from transformers import TrainingArguments
+from transformers.integrations import get_reporting_integration_callbacks
+from transformers.trainer_utils import (
+    RemoveColumnsCollator,
+    TrainerMemoryTracker,
+    has_length
+)
+from transformers.trainer_callback import (
+    CallbackHandler,
+    DefaultFlowCallback,
+    PrinterCallback,
+    TrainerCallback,
+    ProgressCallback
+)
+from transformers import (
+    TrainingArguments,
+    DataCollator,
+    DataCollatorWithPadding,
+    PreTrainedTokenizerBase,
+    default_data_collator,
+    EvalPrediction,
+    logging,
+    FlaxPreTrainedModel,
+)
 
 from dataloader import BatchLoader
 from utils import *
@@ -34,6 +55,8 @@ from utils import *
 
 logger = logging.get_logger(__name__)
 _datasets_available = importlib.util.find_spec("datasets") is not None
+DEFAULT_CALLBACKS = [DefaultFlowCallback]
+DEFAULT_PROGRESS_CALLBACK = ProgressCallback
 
 
 def logit_function(logits):
@@ -44,9 +67,15 @@ class FlaxTrainer(object):
     def __init__(self,
                  model: FlaxPreTrainedModel,
                  args: TrainingArguments,
-                 rng_seed: int = 12,
+                 data_collator: Optional[DataCollator] = None,
+                 tokenizer: Optional[PreTrainedTokenizerBase] = None,
                  train_dataset: Optional[Union[Dataset, IterableDataset]] = None,
-                 eval_dataset: Optional[Union[Dataset, IterableDataset]] = None):
+                 eval_dataset: Optional[Union[Dataset, IterableDataset]] = None,
+                 model_init: Callable[[], FlaxPreTrainedModel] = None,
+                 compute_metrics: Optional[Callable[[EvalPrediction], Dict]] = None,
+                 callbacks: Optional[List[TrainerCallback]] = None,
+                 preprocess_logits_for_metrics: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = None,
+                 rng_seed: int = 12):
 
         self.model, self.args = model, args
 
@@ -59,13 +88,13 @@ class FlaxTrainer(object):
         if eval_dataset:
             self.eval_batch_loader = BatchLoader(eval_dataset, args.per_device_eval_batch_size)
 
-        self.scheduler = get_linear_scheduler(
+        self.lr_scheduler = get_linear_scheduler(
             learning_rate=args.learning_rate, end_value=1e-6,
             warmup_steps=args.warmup_steps
         )
 
         self.optimizer = get_adam_optimizer(
-            learning_rate=self.scheduler,
+            scheduler=self.lr_scheduler,
             b1=args.adam_beta1, b2=args.adam_beta2, eps=args.adam_epsilon, weight_decay=args.weight_decay,
         )
 
@@ -75,8 +104,16 @@ class FlaxTrainer(object):
             tx=self.optimizer
         )
 
+        self._memory_tracker = TrainerMemoryTracker(self.args.skip_memory_metrics)
+        self._memory_tracker.start()
+
+        log_level = args.get_process_log_level()
+        logging.set_verbosity(log_level)
+
+        self._memory_tracker.stop_and_update_metrics()
+
     @partial(jit, static_argnums=0)
-    def train_step(self, state: TrainState, batch:Dict[Any], dropout_rng):
+    def train_step(self, state: TrainState, batch:Dict[str, jax.numpy.DeviceArray], dropout_rng):
         dropout_rng, new_dropout_rng = jax.random.split(dropout_rng)
         labels = batch.pop("labels", None)
 
@@ -87,15 +124,18 @@ class FlaxTrainer(object):
 
         loss, grad = jax.value_and_grad(loss_fn)(state.params)
         new_state = state.apply_gradients(grads=pmean(grad, "batch"))
-        self.scheduler(state.step)
+        self.lr_scheduler(state.step)
         return new_state, pmean({"loss": loss}, axis_name="batch"), new_dropout_rng
 
-    def train(self, train_dataset: Optional[Union[Dataset, IterableDataset]] = None, batch_size: int = 16):
+    def train(self, resume_from_checkpoint: Optional[Union[str, bool]] = None,
+        trial: Union["optuna.Trial", Dict[str, Any]] = None,
+        ignore_keys_for_eval: Optional[List[str]] = None,
+        **kwargs):
+        if resume_from_checkpoint is False:
+            resume_from_checkpoint = None
+
         state = replicate(self.state)
         try:
-            if train_dataset:
-                self.train_batch_loader = BatchLoader(train_dataset, batch_size)
-
             for epoch in range(int(self.args.num_train_epochs)):
                 updates, dropout_rngs = [], jax.random.split(self.rng, jax.local_device_count())
                 u_append = updates.append
@@ -107,6 +147,9 @@ class FlaxTrainer(object):
                         u_append(train_metrics)
                         pbar.update(1)
                 pbar.set_postfix(get_updates(epoch + 1, updates))
+
+            if self.args.do_eval and self.eval_batch_loader:
+                pass
         except Exception as e:
             logger.error(e)
         finally:

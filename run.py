@@ -2,6 +2,7 @@ def main():
     from datasets import load_dataset
     from transformers import AutoTokenizer, FlaxBertForSequenceClassification, TrainingArguments
     from trainer import FlaxTrainer
+
     MODEL = "klue/bert-base"
     dataset = load_dataset("nsmc")
     tokenizer = AutoTokenizer.from_pretrained(MODEL)
@@ -20,3 +21,7 @@ def main():
 
     trainer = FlaxTrainer(model, args=training_args, train_dataset=dataset['train'], eval_dataset=dataset['test'])
     trainer.train()
+
+
+if __name__ == "__main__":
+    main()
