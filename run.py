@@ -9,7 +9,7 @@ from transformers import (
     HfArgumentParser
 )
 
-
+@dataclass
 class DataArguments:
     data_name_or_path: str = field(
         default="nsmc"
@@ -42,7 +42,7 @@ class DataArguments:
         default="test"
     )
 
-
+@dataclass
 class ModelArguments:
     model_name_or_path: str = field(
         default="klue/bert-base"
@@ -52,7 +52,7 @@ class ModelArguments:
         default=False
     )
 
-
+@dataclass
 class TrainArguments(TrainingArguments):
     output_dir = "runs/"
 
