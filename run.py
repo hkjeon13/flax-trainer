@@ -60,9 +60,13 @@ class TrainArguments(TrainingArguments):
 def main():
     parser = HfArgumentParser((DataArguments, ModelArguments, TrainArguments))
     data_args, model_args, train_args = parser.parse_args_into_dataclasses()
+
     dataset = load_dataset(data_args.data_name_or_path)
     tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path)
-    model = FlaxBertForSequenceClassification.from_pretrained(model_args.model_name_or_path, from_pt=model_args.from_pt)
+
+    model = FlaxBertForSequenceClassification.from_pretrained(
+        model_args.model_name_or_path, from_pt=model_args.from_pt
+    )
 
     def example_fn(examples):
         tokenized = tokenizer(
