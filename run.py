@@ -1,26 +1,103 @@
-def main():
-    from datasets import load_dataset
-    from transformers import AutoTokenizer, FlaxBertForSequenceClassification, TrainingArguments
-    from trainer import FlaxTrainer
+from typing import Union
+from trainer import FlaxTrainer
+from datasets import load_dataset
+from dataclasses import dataclass, field
+from transformers import (
+    AutoTokenizer,
+    FlaxBertForSequenceClassification,
+    TrainingArguments,
+    HfArgumentParser
+)
 
-    MODEL = "klue/bert-base"
-    dataset = load_dataset("nsmc")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL)
-    model = FlaxBertForSequenceClassification.from_pretrained(MODEL, from_pt=True)
+
+class DataArguments:
+    data_name_or_path: str = field(
+        default="nsmc"
+    )
+    text_column_name: str = field(
+        default="document"
+    )
+
+    label_column_name: str = field(
+        default="label"
+    )
+
+    padding: Union[str, bool] = field(
+        default="max_length"
+    )
+
+    max_length: int = field(
+        default=256
+    )
+
+    truncation: bool = field(
+        default=True
+    )
+
+    train_split: str = field(
+        default="train"
+    )
+
+    eval_split: str = field(
+        default="test"
+    )
+
+
+class ModelArguments:
+    model_name_or_path: str = field(
+        default="klue/bert-base"
+    )
+
+    from_pt: bool = field(
+        default=False
+    )
+
+
+class TrainArguments(TrainingArguments):
+    output_dir = "runs/"
+
+
+def main():
+    parser = HfArgumentParser((DataArguments, ModelArguments, TrainArguments))
+    data_args, model_args, train_args = parser.parse_args_into_dataclasses()
+    dataset = load_dataset(data_args.data_name_or_path)
+    tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path)
+    model = FlaxBertForSequenceClassification.from_pretrained(model_args.model_name_or_path, from_pt=model_args.from_pt)
 
     def example_fn(examples):
-        tokenized = tokenizer(examples["document"], padding='max_length', max_length=256, truncation=True)
-        tokenized['labels'] = examples['label']
+        tokenized = tokenizer(
+            examples[data_args.text_column_name],
+            padding=data_args.padding,
+            max_length=data_args.max_length,
+            truncation=data_args.truncation
+        )
+        tokenized['labels'] = examples[data_args.label_column_name]
         return tokenized
 
-    dataset['train'] = dataset['train'].map(example_fn, batched=True, remove_columns=dataset['train'].column_names)
-    dataset['test'] = dataset['test'].map(example_fn, batched=True, remove_columns=dataset['test'].column_names)
+    dataset[data_args.train_split] = dataset[data_args.train_split].map(
+        example_fn,
+        batched=True,
+        remove_columns=dataset[data_args.train_split].column_names
+    )
 
-    training_args = TrainingArguments("runs/", num_train_epochs=3, per_device_train_batch_size=32,
-                                      per_device_eval_batch_size=16)
+    dataset[data_args.eval_split] = dataset[data_args.eval_split].map(
+        example_fn,
+        batched=True,
+        remove_columns=dataset[data_args.eval_split].column_names
+    )
 
-    trainer = FlaxTrainer(model, args=training_args, train_dataset=dataset['train'], eval_dataset=dataset['test'])
-    trainer.train()
+    trainer = FlaxTrainer(
+        model,
+        args=train_args,
+        train_dataset=dataset[data_args.train_split],
+        eval_dataset=dataset[data_args.eval_split]
+    )
+
+    if train_args.do_train:
+        trainer.train()
+
+    if train_args.do_eval:
+        trainer.evaluate()
 
 
 if __name__ == "__main__":
