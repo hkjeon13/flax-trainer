@@ -22,7 +22,7 @@ class DataArguments:
         default="label"
     )
 
-    padding: Union[str, bool] = field(
+    padding: str = field(
         default="max_length"
     )
 
@@ -49,7 +49,7 @@ class ModelArguments:
     )
 
     from_pt: bool = field(
-        default=False
+        default=True
     )
 
 @dataclass
@@ -89,6 +89,10 @@ def main():
         batched=True,
         remove_columns=dataset[data_args.eval_split].column_names
     )
+
+    for d in dataset[data_args.train_split]:
+        print(d)
+        break
 
     trainer = FlaxTrainer(
         model,
