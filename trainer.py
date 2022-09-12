@@ -1,4 +1,4 @@
-from typing import Optional, Union, Callable, Dict, Any, List
+from typing import Optional, Union, Callable, Dict, Any, List, Iterable
 from packaging import version
 from itertools import chain
 from functools import partial
@@ -6,6 +6,7 @@ from tqdm import tqdm
 import importlib.util
 
 import jax
+import jax.numpy as jnp
 from jax.lax import pmean
 from jax import pmap, jit
 
@@ -84,6 +85,8 @@ class FlaxTrainer(object):
         if eval_dataset:
             self.eval_batch_loader = BatchLoader(eval_dataset, args.per_device_eval_batch_size)
 
+        self.compute_metrics = compute_metrics
+
         self.lr_scheduler = get_linear_scheduler(
             learning_rate=args.learning_rate, end_value=1e-6,
             warmup_steps=args.warmup_steps
@@ -109,7 +112,7 @@ class FlaxTrainer(object):
         self._memory_tracker.stop_and_update_metrics()
 
     @partial(jit, static_argnums=0)
-    def train_step(self, state: TrainState, batch:Dict[str, jax.numpy.DeviceArray], dropout_rng):
+    def train_step(self, state: TrainState, batch: Dict[str, jax.numpy.DeviceArray], dropout_rng):
         dropout_rng, new_dropout_rng = jax.random.split(dropout_rng)
         labels = batch.pop("labels", None)
 
@@ -145,7 +148,7 @@ class FlaxTrainer(object):
                 pbar.set_postfix(get_updates(epoch + 1, updates))
 
             if self.args.do_eval and self.eval_batch_loader:
-                pass
+                self.evaluate(eval_dataset=self.eval_batch_loader)
         except Exception as e:
             logger.error(e)
         finally:
@@ -154,25 +157,33 @@ class FlaxTrainer(object):
     @partial(jit, static_argnums=0)
     def eval_step(self, state, batch):
         logits = state.apply_fn(**batch, params=state.params, train=False)[0]
-        return logit_function(logits)
+        return logits
 
     def evaluate(self, eval_dataset: Optional[Union[Dataset, IterableDataset]] = None):
         state = flax.jax_utils.replicate(self.state)
         if eval_dataset:
             self.eval_batch_loader = BatchLoader(eval_dataset, self.args.per_device_eval_batch_size)
 
-        metric_fn = load_metric('glue', "stsb")
+        _predictions, _labels = [], []
         parallel_eval_step = jax.pmap(self.eval_step, axis_name="batch")
         with tqdm(total=len(self.eval_batch_loader), desc="Evaluating...", leave=True, position=0) as pbar:
             for batch in self.eval_batch_loader:
-                labels = batch.pop("labels")
-                predictions = parallel_eval_step(state, batch)
-                metric_fn.add_batch(predictions=chain(*predictions), references=chain(*labels))
+                if "labels" in batch:
+                    _labels.append(batch.pop('labels'))
+                _predictions.append(parallel_eval_step(state, batch))
                 pbar.update(1)
+                break
 
-            eval_metric = metric_fn.compute()
+        _predictions = jnp.concatenate(_predictions, axis=0)
+        _labels = jnp.concatenate(_labels, axis=0)
+        print(f"predictions: {_predictions}")
+        print(f"labels: {_labels}")
+
+        if self.compute_metrics:
+            eval_metric = self.compute_metrics((_predictions, _labels))
             eval_metric = {k: v for k, v in eval_metric.items()}
             pbar.set_postfix({k: v for k, v in eval_metric.items()})
+
         self.state = flax.jax_utils.unreplicate(state)
 
     def get_train_dataloader(self) -> DataLoader:
