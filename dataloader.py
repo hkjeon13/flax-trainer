@@ -21,7 +21,7 @@ class BatchLoader(object):
                 outputs.clear()
 
         if outputs:
-            return {k: shard(jnp.array(np.array(v))) for k, v in outputs.items()}
+            yield {k: shard(jnp.array(np.array(v))) for k, v in outputs.items()}
 
     def __len__(self):
-        return (self.length // self.batch_size) + 1 * (self.length // self.batch_size != 0)
+        return (self.length // self.batch_size) + 1 * (self.length % self.batch_size != 0)
