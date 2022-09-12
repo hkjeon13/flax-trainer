@@ -134,10 +134,10 @@ class FlaxTrainer(object):
                 updates, dropout_rngs = [], jax.random.split(self.rng, jax.local_device_count())
                 u_append = updates.append
 
-                train_batch_loader = BatchLoader(self.train_dataset, self.per_device_train_batch_size)
+                train_batch_loader = BatchLoader(self.train_dataset, self.args.per_device_train_batch_size)
 
                 parallel_train_step = pmap(self.train_step, "batch", donate_argnums=(0,))
-                with tqdm(total=len(train_batch_loader), leave=True, position=0) as pbar:
+                with tqdm(total=len(train_batch_loader), desc="Training...", leave=True, position=0) as pbar:
                     for batch in train_batch_loader:
                         state, train_metrics, dropout_rngs = parallel_train_step(state, batch, dropout_rngs)
                         u_append(train_metrics)
@@ -158,7 +158,7 @@ class FlaxTrainer(object):
 
     def evaluate(self, eval_dataset: Optional[Union[Dataset, IterableDataset]] = None):
         state = flax.jax_utils.replicate(self.state)
-        if eval_dataset:
+        if eval_dataset is not None:
             eval_batch_loader = BatchLoader(eval_dataset, self.args.per_device_eval_batch_size)
 
         _predictions, _labels = [], []

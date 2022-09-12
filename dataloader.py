@@ -6,7 +6,7 @@ import numpy as np
 
 class BatchLoader(object):
     def __init__(self, data, batch_size: int = 4):
-        self.length = len(data)
+        self.length = (len(data)//batch_size)+1
         self.dataset = data
         self.batch_size = batch_size
 
