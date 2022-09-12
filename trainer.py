@@ -25,10 +25,13 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset, IterableDataset
 
+from transformers.trainer_pt_utils import IterableDatasetShard
 from transformers.trainer_utils import (
     RemoveColumnsCollator,
     TrainerMemoryTracker,
+    seed_worker
 )
+
 from transformers.trainer_callback import (
     DefaultFlowCallback,
     TrainerCallback,
@@ -78,6 +81,8 @@ class FlaxTrainer(object):
         self.rng = jax.random.PRNGKey(rng_seed)
 
         self.train_dataset, self.eval_dataset = train_dataset, eval_dataset
+
+        self._train_batch_size = args.train_batch_size
 
         self.compute_metrics = compute_metrics
 
@@ -134,8 +139,8 @@ class FlaxTrainer(object):
                 updates, dropout_rngs = [], jax.random.split(self.rng, jax.local_device_count())
                 u_append = updates.append
 
-                train_batch_loader = BatchLoader(self.train_dataset, self.args.per_device_train_batch_size)
-
+                #train_batch_loader = BatchLoader(self.train_dataset, self.args.per_device_train_batch_size)
+                train_batch_loader = self.get_train_dataloader()
                 parallel_train_step = pmap(self.train_step, "batch", donate_argnums=(0,))
                 with tqdm(total=len(train_batch_loader), desc="Training...", leave=True, position=0) as pbar:
                     for batch in train_batch_loader:
@@ -196,6 +201,37 @@ class FlaxTrainer(object):
             train_dataset = self._remove_unused_columns(train_dataset, description="training")
         else:
             data_collator = self._get_collator_with_removed_columns(data_collator, description="training")
+
+        if isinstance(train_dataset, torch.utils.data.IterableDataset):
+            if self.args.world_size > 1:
+                train_dataset = IterableDatasetShard(
+                    train_dataset,
+                    batch_size=self._train_batch_size,
+                    drop_last=self.args.dataloader_drop_last,
+                    num_processes=self.args.world_size,
+                    process_index=self.args.process_index,
+                )
+
+            return DataLoader(
+                train_dataset,
+                batch_size=self.args.per_device_train_batch_size,
+                collate_fn=data_collator,
+                num_workers=self.args.dataloader_num_workers,
+                pin_memory=self.args.dataloader_pin_memory,
+            )
+
+        train_sampler = self._get_train_sampler()
+
+        return DataLoader(
+            train_dataset,
+            batch_size=self._train_batch_size,
+            sampler=train_sampler,
+            collate_fn=data_collator,
+            drop_last=self.args.dataloader_drop_last,
+            num_workers=self.args.dataloader_num_workers,
+            pin_memory=self.args.dataloader_pin_memory,
+            worker_init_fn=seed_worker,
+        )
 
     def _get_collator_with_removed_columns(
             self, data_collator: Callable, description: Optional[str] = None
