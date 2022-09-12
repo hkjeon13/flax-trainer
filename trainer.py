@@ -145,7 +145,7 @@ class FlaxTrainer(object):
                 pbar.set_postfix(get_updates(epoch + 1, updates))
 
                 if self.args.do_eval and self.eval_dataset:
-                    self.evaluate(eval_dataset=self.eval_dataset, state=self.state)
+                    self.evaluate(eval_dataset=self.eval_dataset, initial_state=self.state)
         except Exception as e:
             logger.error(e)
         finally:
@@ -156,8 +156,8 @@ class FlaxTrainer(object):
         logits = state.apply_fn(**batch, params=state.params, train=False)[0]
         return logits
 
-    def evaluate(self, eval_dataset: Optional[Union[Dataset, IterableDataset]] = None, state = None):
-        if state is None:
+    def evaluate(self, eval_dataset: Optional[Union[Dataset, IterableDataset]] = None, initial_state=None):
+        if initial_state is None:
             state = flax.jax_utils.replicate(self.state)
 
         if eval_dataset is not None:
@@ -179,8 +179,8 @@ class FlaxTrainer(object):
                 eval_metric = self.compute_metrics((_predictions, _labels))
                 eval_metric = {k: v for k, v in eval_metric.items()}
                 pbar.set_postfix({k: v for k, v in eval_metric.items()})
-
-        self.state = flax.jax_utils.unreplicate(state)
+        if initial_state is None:
+            self.state = flax.jax_utils.unreplicate(state)
 
     def get_train_dataloader(self) -> DataLoader:
 
