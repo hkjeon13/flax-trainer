@@ -144,8 +144,8 @@ class FlaxTrainer(object):
                         pbar.update(1)
                 pbar.set_postfix(get_updates(epoch + 1, updates))
 
-            if self.args.do_eval and self.eval_dataset:
-                self.evaluate(eval_dataset=self.eval_dataset)
+                if self.args.do_eval and self.eval_dataset:
+                    self.evaluate(eval_dataset=self.eval_dataset, state=self.state)
         except Exception as e:
             logger.error(e)
         finally:
@@ -156,8 +156,10 @@ class FlaxTrainer(object):
         logits = state.apply_fn(**batch, params=state.params, train=False)[0]
         return logits
 
-    def evaluate(self, eval_dataset: Optional[Union[Dataset, IterableDataset]] = None):
-        state = flax.jax_utils.replicate(self.state)
+    def evaluate(self, eval_dataset: Optional[Union[Dataset, IterableDataset]] = None, state = None):
+        if state is None:
+            state = flax.jax_utils.replicate(self.state)
+
         if eval_dataset is not None:
             eval_batch_loader = BatchLoader(eval_dataset, self.args.per_device_eval_batch_size)
 
