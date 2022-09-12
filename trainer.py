@@ -1,13 +1,14 @@
-from packaging import version
 from typing import Optional, Union, Callable, Dict, Any, List
-import importlib.util
+from packaging import version
 from itertools import chain
 from functools import partial
 from tqdm import tqdm
+import importlib.util
 
 import jax
 from jax.lax import pmean
 from jax import pmap, jit
+
 
 import flax
 from flax.jax_utils import unreplicate, replicate
@@ -23,25 +24,20 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset, IterableDataset
 
-from transformers.integrations import get_reporting_integration_callbacks
 from transformers.trainer_utils import (
     RemoveColumnsCollator,
     TrainerMemoryTracker,
-    has_length
 )
 from transformers.trainer_callback import (
-    CallbackHandler,
     DefaultFlowCallback,
-    PrinterCallback,
     TrainerCallback,
     ProgressCallback
 )
+
 from transformers import (
     TrainingArguments,
     DataCollator,
-    DataCollatorWithPadding,
     PreTrainedTokenizerBase,
-    default_data_collator,
     EvalPrediction,
     logging,
     FlaxPreTrainedModel,
@@ -52,6 +48,7 @@ from utils import *
 
 
 logger = logging.get_logger(__name__)
+
 _datasets_available = importlib.util.find_spec("datasets") is not None
 DEFAULT_CALLBACKS = [DefaultFlowCallback]
 DEFAULT_PROGRESS_CALLBACK = ProgressCallback
@@ -73,13 +70,14 @@ class FlaxTrainer(object):
                  compute_metrics: Optional[Callable[[EvalPrediction], Dict]] = None,
                  callbacks: Optional[List[TrainerCallback]] = None,
                  preprocess_logits_for_metrics: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = None,
-                 rng_seed: int = 12):
+                 rng_seed: int = 432):
 
         self.model, self.args = model, args
 
         self.rng = jax.random.PRNGKey(rng_seed)
 
         self.train_batch_loader, self.eval_batch_loader = None, None
+
         if train_dataset:
             self.train_batch_loader = BatchLoader(train_dataset, args.per_device_train_batch_size)
 

@@ -1,8 +1,7 @@
+from flax.training.common_utils import shard
 from collections import defaultdict
 import jax.numpy as jnp
 import numpy as np
-
-from flax.training.common_utils import shard
 
 
 class BatchLoader(object):
