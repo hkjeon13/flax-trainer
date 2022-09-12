@@ -1,6 +1,7 @@
 from utils import get_adam_optimizer, get_updates, get_linear_scheduler
+import jax.numpy as jnp
 from trainer import FlaxTrainer
-from datasets import load_dataset
+from datasets import load_dataset, load_metric
 from dataclasses import dataclass, field
 from transformers import (
     AutoTokenizer,
@@ -51,6 +52,9 @@ class ModelArguments:
     from_pt: bool = field(
         default=True
     )
+    metric_name: str = field(
+        default="accuracy"
+    )
 
 @dataclass
 class TrainArguments(TrainingArguments):
@@ -90,11 +94,18 @@ def main():
         remove_columns=dataset[data_args.eval_split].column_names
     )
 
+    _metric = load_metric(model_args.metric_name)
+    def compute_metrics(p):
+        preds, labels = p
+        preds = jnp.argmax(preds, axis=-1)
+        return _metric.compute(predictions=preds, references=labels)
+
     trainer = FlaxTrainer(
         model,
         args=train_args,
         train_dataset=dataset[data_args.train_split],
-        eval_dataset=dataset[data_args.eval_split]
+        eval_dataset=dataset[data_args.eval_split],
+        compute_metrics=compute_metrics
     )
 
     if train_args.do_train:

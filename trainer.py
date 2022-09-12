@@ -178,8 +178,6 @@ class FlaxTrainer(object):
 
         _predictions = jnp.squeeze(jnp.concatenate(_predictions, axis=1))
         _labels = jnp.squeeze(jnp.concatenate(_labels, axis=1))
-        print(f"predictions 3: {_predictions}")
-        print(f"labels 3: {_labels}")
 
         if self.compute_metrics:
             eval_metric = self.compute_metrics((_predictions, _labels))
