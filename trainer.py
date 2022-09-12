@@ -157,8 +157,8 @@ class FlaxTrainer(object):
         return logits
 
     def evaluate(self, eval_dataset: Optional[Union[Dataset, IterableDataset]] = None, initial_state=None):
-        if initial_state is None:
-            state = flax.jax_utils.replicate(self.state)
+
+        state = flax.jax_utils.replicate(self.state) if initial_state is None else initial_state
 
         if eval_dataset is not None:
             eval_batch_loader = BatchLoader(eval_dataset, self.args.per_device_eval_batch_size)
@@ -179,6 +179,7 @@ class FlaxTrainer(object):
                 eval_metric = self.compute_metrics((_predictions, _labels))
                 eval_metric = {k: v for k, v in eval_metric.items()}
                 pbar.set_postfix({k: v for k, v in eval_metric.items()})
+
         if initial_state is None:
             self.state = flax.jax_utils.unreplicate(state)
 
