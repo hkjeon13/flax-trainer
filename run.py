@@ -101,7 +101,7 @@ def main():
         trainer.train()
 
     if train_args.do_eval:
-        trainer.evaluate()
+        trainer.evaluate(dataset[data_args.eval_split])
 
 
 if __name__ == "__main__":

@@ -167,17 +167,19 @@ class FlaxTrainer(object):
         _predictions, _labels = [], []
         parallel_eval_step = jax.pmap(self.eval_step, axis_name="batch")
         with tqdm(total=len(self.eval_batch_loader), desc="Evaluating...", leave=True, position=0) as pbar:
-            for batch in self.eval_batch_loader:
+            for i,batch in enumerate(self.eval_batch_loader):
                 if "labels" in batch:
                     _labels.append(batch.pop('labels'))
                 _predictions.append(parallel_eval_step(state, batch))
                 pbar.update(1)
-                break
+                if i > 2:
+                    break
 
-        _predictions = jnp.concatenate(_predictions, axis=0)
-        _labels = jnp.concatenate(_labels, axis=0)
-        print(f"predictions: {_predictions}")
-        print(f"labels: {_labels}")
+
+        _predictions = jnp.squeeze(jnp.concatenate(_predictions, axis=1))
+        _labels = jnp.squeeze(jnp.concatenate(_labels, axis=1))
+        print(f"predictions 3: {_predictions}")
+        print(f"labels 3: {_labels}")
 
         if self.compute_metrics:
             eval_metric = self.compute_metrics((_predictions, _labels))
