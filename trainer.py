@@ -36,6 +36,7 @@ from transformers.trainer_callback import (
     DefaultFlowCallback,
     TrainerCallback,
     ProgressCallback
+
 )
 
 from transformers import (
@@ -45,6 +46,8 @@ from transformers import (
     EvalPrediction,
     logging,
     FlaxPreTrainedModel,
+    default_data_collator,
+    DataCollatorWithPadding
 )
 
 from dataloader import BatchLoader
@@ -81,6 +84,9 @@ class FlaxTrainer(object):
         self.rng = jax.random.PRNGKey(rng_seed)
 
         self.train_dataset, self.eval_dataset = train_dataset, eval_dataset
+
+        default_collator = default_data_collator if tokenizer is None else DataCollatorWithPadding(tokenizer)
+        self.data_collator = data_collator if data_collator is not None else default_collator
 
         self._train_batch_size = args.train_batch_size
 
