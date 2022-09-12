@@ -142,10 +142,12 @@ class FlaxTrainer(object):
                         state, train_metrics, dropout_rngs = parallel_train_step(state, batch, dropout_rngs)
                         u_append(train_metrics)
                         pbar.update(1)
+
                 pbar.set_postfix(get_updates(epoch + 1, updates))
 
                 if self.args.do_eval and self.eval_dataset:
-                    self.evaluate(eval_dataset=self.eval_dataset, initial_state=self.state)
+                    self.evaluate(eval_dataset=self.eval_dataset, initial_state=state)
+
         except Exception as e:
             logger.error(e)
         finally:

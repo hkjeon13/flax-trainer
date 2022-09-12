@@ -6,7 +6,7 @@ import numpy as np
 
 class BatchLoader(object):
     def __init__(self, data, batch_size: int = 4):
-        self.length = (len(data)//batch_size)+1
+        self.length = len(data)
         self.dataset = data
         self.batch_size = batch_size
 
@@ -24,4 +24,4 @@ class BatchLoader(object):
             return {k: shard(jnp.array(np.array(v))) for k, v in outputs.items()}
 
     def __len__(self):
-        return self.length // self.batch_size + 1 * (self.length // self.batch_size != 0)
+        return (self.length // self.batch_size) + 1 * (self.length // self.batch_size != 0)
