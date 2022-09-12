@@ -77,13 +77,7 @@ class FlaxTrainer(object):
 
         self.rng = jax.random.PRNGKey(rng_seed)
 
-        self.train_batch_loader, self.eval_batch_loader = None, None
-
-        if train_dataset:
-            self.train_batch_loader = BatchLoader(train_dataset, args.per_device_train_batch_size)
-
-        if eval_dataset:
-            self.eval_batch_loader = BatchLoader(eval_dataset, args.per_device_eval_batch_size)
+        self.train_dataset, self.eval_dataset = train_dataset, eval_dataset
 
         self.compute_metrics = compute_metrics
 
@@ -134,21 +128,24 @@ class FlaxTrainer(object):
             resume_from_checkpoint = None
 
         state = replicate(self.state)
+
         try:
             for epoch in range(int(self.args.num_train_epochs)):
                 updates, dropout_rngs = [], jax.random.split(self.rng, jax.local_device_count())
                 u_append = updates.append
 
+                train_batch_loader = BatchLoader(self.train_dataset, self.per_device_train_batch_size)
+
                 parallel_train_step = pmap(self.train_step, "batch", donate_argnums=(0,))
-                with tqdm(total=len(self.train_batch_loader), leave=True, position=0) as pbar:
-                    for batch in self.train_batch_loader:
+                with tqdm(total=len(train_batch_loader), leave=True, position=0) as pbar:
+                    for batch in train_batch_loader:
                         state, train_metrics, dropout_rngs = parallel_train_step(state, batch, dropout_rngs)
                         u_append(train_metrics)
                         pbar.update(1)
                 pbar.set_postfix(get_updates(epoch + 1, updates))
 
-            if self.args.do_eval and self.eval_batch_loader:
-                self.evaluate(eval_dataset=self.eval_batch_loader)
+            if self.args.do_eval and self.eval_dataset:
+                self.evaluate(eval_dataset=self.eval_dataset)
         except Exception as e:
             logger.error(e)
         finally:
@@ -162,27 +159,24 @@ class FlaxTrainer(object):
     def evaluate(self, eval_dataset: Optional[Union[Dataset, IterableDataset]] = None):
         state = flax.jax_utils.replicate(self.state)
         if eval_dataset:
-            self.eval_batch_loader = BatchLoader(eval_dataset, self.args.per_device_eval_batch_size)
+            eval_batch_loader = BatchLoader(eval_dataset, self.args.per_device_eval_batch_size)
 
         _predictions, _labels = [], []
         parallel_eval_step = jax.pmap(self.eval_step, axis_name="batch")
-        with tqdm(total=len(self.eval_batch_loader), desc="Evaluating...", leave=True, position=0) as pbar:
-            for i,batch in enumerate(self.eval_batch_loader):
+        with tqdm(total=len(eval_batch_loader), desc="Evaluating...", leave=True, position=0) as pbar:
+            for batch in eval_batch_loader:
                 if "labels" in batch:
                     _labels.append(batch.pop('labels'))
                 _predictions.append(parallel_eval_step(state, batch))
                 pbar.update(1)
-                if i > 2:
-                    break
 
+            _predictions = jnp.squeeze(jnp.concatenate(_predictions, axis=1))
+            _labels = jnp.squeeze(jnp.concatenate(_labels, axis=1))
 
-        _predictions = jnp.squeeze(jnp.concatenate(_predictions, axis=1))
-        _labels = jnp.squeeze(jnp.concatenate(_labels, axis=1))
-
-        if self.compute_metrics:
-            eval_metric = self.compute_metrics((_predictions, _labels))
-            eval_metric = {k: v for k, v in eval_metric.items()}
-            pbar.set_postfix({k: v for k, v in eval_metric.items()})
+            if self.compute_metrics:
+                eval_metric = self.compute_metrics((_predictions, _labels))
+                eval_metric = {k: v for k, v in eval_metric.items()}
+                pbar.set_postfix({k: v for k, v in eval_metric.items()})
 
         self.state = flax.jax_utils.unreplicate(state)
 

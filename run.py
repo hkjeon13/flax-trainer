@@ -43,6 +43,14 @@ class DataArguments:
         default="test"
     )
 
+    train_samples: int = field(
+        default=None
+    )
+
+    eval_samples: int = field(
+        default=None
+    )
+
 @dataclass
 class ModelArguments:
     model_name_or_path: str = field(
@@ -66,6 +74,12 @@ def main():
     data_args, model_args, train_args = parser.parse_args_into_dataclasses()
 
     dataset = load_dataset(data_args.data_name_or_path)
+    if data_args.train_samples:
+        dataset[data_args.train_split] = dataset[data_args.train_split].select(range(data_args.train_samples))
+
+    if data_args.eval_samples:
+        dataset[data_args.eval_split] = dataset[data_args.eval_split].select(range(data_args.eval_samples))
+
     tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path)
 
     model = FlaxBertForSequenceClassification.from_pretrained(
@@ -111,7 +125,7 @@ def main():
     if train_args.do_train:
         trainer.train()
 
-    if train_args.do_eval:
+    elif train_args.do_eval:
         trainer.evaluate(dataset[data_args.eval_split])
 
 
