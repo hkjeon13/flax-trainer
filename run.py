@@ -1,4 +1,4 @@
-from typing import Union
+from utils import get_adam_optimizer, get_updates, get_linear_scheduler
 from trainer import FlaxTrainer
 from datasets import load_dataset
 from dataclasses import dataclass, field
@@ -89,10 +89,6 @@ def main():
         batched=True,
         remove_columns=dataset[data_args.eval_split].column_names
     )
-
-    for d in dataset[data_args.train_split]:
-        print(d)
-        break
 
     trainer = FlaxTrainer(
         model,
