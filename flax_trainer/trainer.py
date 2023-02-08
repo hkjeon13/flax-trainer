@@ -49,7 +49,7 @@ from transformers import (
 )
 
 from .dataloader import BatchLoader
-from utils import *
+from .utils import *
 
 
 logger = logging.get_logger(__name__)

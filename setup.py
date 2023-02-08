@@ -6,7 +6,7 @@ with open("README.md", mode="r", encoding="utf-8") as readme:
 
 setup(
     name='flax-trainer',
-    version= "0.0.0.2",
+    version= "0.0.0.3",
     description='Korean AI Project',
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -28,7 +28,8 @@ setup(
             "datasets",
             "evaluate",
             "flax",
-            "jax"
+            "jax",
+            "optax"
     ],
     classifiers=[
         "Intended Audience :: Developers",
