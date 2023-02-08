@@ -1,6 +1,5 @@
-from typing import Optional, Union, Callable, Dict, Any, List, Iterable
+from typing import Optional, Union, Callable, Dict, Any, List
 from packaging import version
-from itertools import chain
 from functools import partial
 from tqdm import tqdm
 import importlib.util
@@ -19,7 +18,6 @@ from flax.training.common_utils import onehot
 from optax import softmax_cross_entropy
 
 import datasets
-from datasets import load_metric
 
 import torch
 from torch.utils.data import DataLoader
@@ -50,7 +48,7 @@ from transformers import (
     DataCollatorWithPadding
 )
 
-from dataloader import BatchLoader
+from .dataloader import BatchLoader
 from utils import *
 
 
@@ -73,11 +71,9 @@ class FlaxTrainer(object):
                  tokenizer: Optional[PreTrainedTokenizerBase] = None,
                  train_dataset: Optional[Union[Dataset, IterableDataset]] = None,
                  eval_dataset: Optional[Union[Dataset, IterableDataset]] = None,
-                 model_init: Callable[[], FlaxPreTrainedModel] = None,
                  compute_metrics: Optional[Callable[[EvalPrediction], Dict]] = None,
-                 callbacks: Optional[List[TrainerCallback]] = None,
-                 preprocess_logits_for_metrics: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = None,
-                 rng_seed: int = 432):
+                 rng_seed: int = 432,
+                 **kwargs) -> None:
 
         self.model, self.args = model, args
 
@@ -116,21 +112,6 @@ class FlaxTrainer(object):
 
         self._memory_tracker.stop_and_update_metrics()
 
-    @partial(jit, static_argnums=0)
-    def train_step(self, state: TrainState, batch: Dict[str, jax.numpy.DeviceArray], dropout_rng):
-        dropout_rng, new_dropout_rng = jax.random.split(dropout_rng)
-        labels = batch.pop("labels", None)
-
-        def loss_fn(params):
-            logits = state.apply_fn(**batch, params=params, dropout_rng=dropout_rng, train=True)[0]
-            onehot_labels = onehot(labels, logits.shape[-1])
-            return softmax_cross_entropy(logits, onehot_labels).mean()
-
-        loss, grad = jax.value_and_grad(loss_fn)(state.params)
-        new_state = state.apply_gradients(grads=pmean(grad, "batch"))
-        self.lr_scheduler(state.step)
-        return new_state, pmean({"loss": loss}, axis_name="batch"), new_dropout_rng
-
     def train(self, resume_from_checkpoint: Optional[Union[str, bool]] = None,
         trial: Union["optuna.Trial", Dict[str, Any]] = None,
         ignore_keys_for_eval: Optional[List[str]] = None,
@@ -145,7 +126,6 @@ class FlaxTrainer(object):
                 updates, dropout_rngs = [], jax.random.split(self.rng, jax.local_device_count())
                 u_append = updates.append
 
-                #train_batch_loader = BatchLoader(self.train_dataset, self.args.per_device_train_batch_size)
                 train_batch_loader = self.get_train_dataloader()
                 parallel_train_step = pmap(self.train_step, "batch", donate_argnums=(0,))
                 with tqdm(total=len(train_batch_loader), desc="Training...", leave=True, position=0) as pbar:
@@ -282,3 +262,72 @@ class FlaxTrainer(object):
             return dataset
         else:
             return dataset.remove_columns(ignored_columns)
+
+
+class FlaxTrainerForSequenceClassification(FlaxTrainer):
+    @partial(jit, static_argnums=0)
+    def train_step(self, state: TrainState, batch: Dict[str, jax.numpy.DeviceArray], dropout_rng):
+        dropout_rng, new_dropout_rng = jax.random.split(dropout_rng)
+        labels = batch.pop("labels", None)
+
+        def loss_fn(params):
+            logits = state.apply_fn(**batch, params=params, dropout_rng=dropout_rng, train=True)[0]
+            onehot_labels = onehot(labels, logits.shape[-1])
+            return softmax_cross_entropy(logits, onehot_labels).mean()
+
+        loss, grad = jax.value_and_grad(loss_fn)(state.params)
+        new_state = state.apply_gradients(grads=pmean(grad, "batch"))
+        self.lr_scheduler(state.step)
+        return new_state, pmean({"loss": loss}, axis_name="batch"), new_dropout_rng
+
+
+class FlaxTrainerForTokenClassification(FlaxTrainer):
+    @partial(jit, static_argnums=0)
+    def train_step(self, state: TrainState, batch: Dict[str, jax.numpy.DeviceArray], dropout_rng):
+        dropout_rng, new_dropout_rng = jax.random.split(dropout_rng)
+        labels = batch.pop("labels", None)
+
+        def loss_fn(params):
+            logits = state.apply_fn(**batch, params=params, dropout_rng=dropout_rng, train=True)[0]
+            onehot_labels = onehot(labels, logits.shape[-1])
+            return softmax_cross_entropy(logits, onehot_labels).mean()
+
+        loss, grad = jax.value_and_grad(loss_fn)(state.params)
+        new_state = state.apply_gradients(grads=pmean(grad, "batch"))
+        self.lr_scheduler(state.step)
+        return new_state, pmean({"loss": loss}, axis_name="batch"), new_dropout_rng
+
+
+class FlaxTrainerForMaskedLM(FlaxTrainer):
+    @partial(jit, static_argnums=0)
+    def train_step(self, state: TrainState, batch: Dict[str, jax.numpy.DeviceArray], dropout_rng):
+        dropout_rng, new_dropout_rng = jax.random.split(dropout_rng)
+        labels = batch.pop("labels", None)
+        label_mask = jnp.where(labels > 0, 1.0, 0.0)
+        def loss_fn(params):
+            logits = state.apply_fn(**batch, params=params, dropout_rng=dropout_rng, train=True)[0]
+            onehot_labels = onehot(label_mask, logits.shape[-1])
+            return softmax_cross_entropy(logits, onehot_labels) * label_mask
+
+        loss, grad = jax.value_and_grad(loss_fn)(state.params)
+        new_state = state.apply_gradients(grads=pmean(grad, "batch"))
+        self.lr_scheduler(state.step)
+        return new_state, pmean({"loss": loss}, axis_name="batch"), new_dropout_rng
+
+
+class FlaxTrainerForCausalLM(FlaxTrainer):
+    @partial(jit, static_argnums=0)
+    def train_step(self, state: TrainState, batch: Dict[str, jax.numpy.DeviceArray], dropout_rng):
+        dropout_rng, new_dropout_rng = jax.random.split(dropout_rng)
+        labels = batch.pop("labels", None)
+        def loss_fn(params):
+            logits = state.apply_fn(**batch, params=params, dropout_rng=dropout_rng, train=True)[0]
+            shift_logits = logits[..., :-1, :]
+            shift_labels = labels[..., 1:]
+            onehot_labels = onehot(shift_logits, shift_labels.shape[-1])
+            return softmax_cross_entropy(logits, onehot_labels).mean()
+
+        loss, grad = jax.value_and_grad(loss_fn)(state.params)
+        new_state = state.apply_gradients(grads=pmean(grad, "batch"))
+        self.lr_scheduler(state.step)
+        return new_state, pmean({"loss": loss}, axis_name="batch"), new_dropout_rng

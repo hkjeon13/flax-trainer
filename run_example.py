@@ -1,6 +1,5 @@
-from utils import get_adam_optimizer, get_updates, get_linear_scheduler
 import jax.numpy as jnp
-from trainer import FlaxTrainer
+from flax_trainer.trainer import FlaxTrainer
 from datasets import load_dataset, load_metric
 from dataclasses import dataclass, field
 from transformers import (
