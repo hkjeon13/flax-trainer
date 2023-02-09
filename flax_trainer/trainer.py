@@ -15,8 +15,8 @@ from jax import pmap, jit
 from jax.lax import pmean
 from optax import softmax_cross_entropy
 from packaging import version
-from torch.utils.data import DataLoader
-from torch.utils.data import Dataset, IterableDataset
+from torch.utils.data import DataLoader, Dataset, RandomSampler, IterableDataset
+from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 from transformers import (
     TrainingArguments,
@@ -29,9 +29,15 @@ from transformers import (
     DataCollatorWithPadding
 )
 from transformers.trainer_callback import DefaultFlowCallback, ProgressCallback
-from transformers.trainer_pt_utils import IterableDatasetShard
-from transformers.trainer_utils import RemoveColumnsCollator, TrainerMemoryTracker, seed_worker
-from transformers.utils import find_labels
+from transformers.trainer_pt_utils import (
+    DistributedSamplerWithLoop,
+    DistributedLengthGroupedSampler,
+    LengthGroupedSampler,
+    IterableDatasetShard
+)
+from transformers.trainer_utils import RemoveColumnsCollator, TrainerMemoryTracker, seed_worker, has_length
+from transformers.training_args import ParallelMode
+from transformers.utils import find_labels, is_datasets_available
 
 from .dataloader import BatchLoader
 from .utils import *
@@ -163,6 +169,77 @@ class FlaxTrainer(object):
 
         if initial_state is None:
             self.state = flax.jax_utils.unreplicate(state)
+
+    def _get_train_sampler(self) -> Optional[torch.utils.data.Sampler]:
+        if self.train_dataset is None or not has_length(self.train_dataset):
+            return None
+
+        generator = None
+        if self.args.world_size <= 1:
+            generator = torch.Generator()
+            # for backwards compatibility, we generate a seed here (which is sampled from a generator seeded with
+            # `args.seed`) if data_seed isn't provided.
+            # Further on in this method, we default to `args.seed` instead.
+            if self.args.data_seed is None:
+                seed = int(torch.empty((), dtype=torch.int64).random_().item())
+            else:
+                seed = self.args.data_seed
+            generator.manual_seed(seed)
+
+        seed = self.args.data_seed if self.args.data_seed is not None else self.args.seed
+
+        # Build the sampler.
+        if self.args.group_by_length:
+            if is_datasets_available() and isinstance(self.train_dataset, datasets.Dataset):
+                lengths = (
+                    self.train_dataset[self.args.length_column_name]
+                    if self.args.length_column_name in self.train_dataset.column_names
+                    else None
+                )
+            else:
+                lengths = None
+            model_input_name = self.tokenizer.model_input_names[0] if self.tokenizer is not None else None
+            if self.args.world_size <= 1:
+                return LengthGroupedSampler(
+                    self.args.train_batch_size * self.args.gradient_accumulation_steps,
+                    dataset=self.train_dataset,
+                    lengths=lengths,
+                    model_input_name=model_input_name,
+                    generator=generator,
+                )
+            else:
+                return DistributedLengthGroupedSampler(
+                    self.args.train_batch_size * self.args.gradient_accumulation_steps,
+                    dataset=self.train_dataset,
+                    num_replicas=self.args.world_size,
+                    rank=self.args.process_index,
+                    lengths=lengths,
+                    model_input_name=model_input_name,
+                    seed=seed,
+                )
+
+        else:
+            if self.args.world_size <= 1:
+                return RandomSampler(self.train_dataset, generator=generator)
+            elif (
+                    self.args.parallel_mode in [ParallelMode.TPU, ParallelMode.SAGEMAKER_MODEL_PARALLEL]
+                    and not self.args.dataloader_drop_last
+            ):
+                # Use a loop for TPUs when drop_last is False to have all batches have the same size.
+                return DistributedSamplerWithLoop(
+                    self.train_dataset,
+                    batch_size=self.args.per_device_train_batch_size,
+                    num_replicas=self.args.world_size,
+                    rank=self.args.process_index,
+                    seed=seed,
+                )
+            else:
+                return DistributedSampler(
+                    self.train_dataset,
+                    num_replicas=self.args.world_size,
+                    rank=self.args.process_index,
+                    seed=seed,
+                )
 
     def get_train_dataloader(self) -> DataLoader:
 
