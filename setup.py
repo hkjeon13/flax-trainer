@@ -27,7 +27,10 @@ setup(
             "transformers",
             "datasets",
             "evaluate",
-            "optax"
+            "optax",
+            "flax",
+            "jax",
+            "jaxlib"
     ],
     classifiers=[
         "Intended Audience :: Developers",
