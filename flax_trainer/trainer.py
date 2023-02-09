@@ -103,7 +103,7 @@ class FlaxTrainer(object):
               **kwargs):
         if self.train_dataset is not None:
             self.train_dataset = self._remove_unused_columns(self.train_dataset)
-        print("Train Dataset:", self.train_dataset)
+
         if resume_from_checkpoint is False:
             resume_from_checkpoint = None
 
@@ -117,13 +117,12 @@ class FlaxTrainer(object):
                 train_batch_loader = BatchLoader(self.train_dataset, self.args.per_device_eval_batch_size)
 
                 parallel_train_step = pmap(self.train_step, "batch", donate_argnums=(0,))
-                with tqdm(total=len(train_batch_loader), desc="Training...", leave=True, position=0) as pbar:
-                    for batch in train_batch_loader:
-                        state, train_metrics, dropout_rngs = parallel_train_step(state, batch, dropout_rngs)
-                        u_append(train_metrics)
-                        pbar.update(1)
+                loader = tqdm(train_batch_loader, total=len(train_batch_loader), desc="Training...", leave=True, position=0)
+                for batch in loader:
+                    state, train_metrics, dropout_rngs = parallel_train_step(state, batch, dropout_rngs)
+                    u_append(train_metrics)
 
-                pbar.set_postfix(get_updates(epoch + 1, updates))
+                loader.set_postfix(get_updates(epoch + 1, updates))
 
                 if self.args.do_eval and self.eval_dataset:
                     self.evaluate(eval_dataset=self.eval_dataset, initial_state=state)
@@ -147,20 +146,19 @@ class FlaxTrainer(object):
 
         _predictions, _labels = [], []
         parallel_eval_step = jax.pmap(self.eval_step, axis_name="batch")
-        with tqdm(total=len(eval_batch_loader), desc="Evaluating...", leave=True, position=0) as pbar:
-            for batch in eval_batch_loader:
-                if "labels" in batch:
-                    _labels.append(batch.pop('labels'))
-                _predictions.append(parallel_eval_step(state, batch))
-                pbar.update(1)
+        loader = tqdm(eval_batch_loader, total=len(eval_batch_loader), desc="Evaluating...", leave=True, position=0)
+        for batch in loader:
+            if "labels" in batch:
+                _labels.append(batch.pop('labels'))
+            _predictions.append(parallel_eval_step(state, batch))
 
-            _predictions = jnp.squeeze(jnp.concatenate(_predictions, axis=1))
-            _labels = jnp.squeeze(jnp.concatenate(_labels, axis=1))
+        _predictions = jnp.squeeze(jnp.concatenate(_predictions, axis=1))
+        _labels = jnp.squeeze(jnp.concatenate(_labels, axis=1))
 
-            if self.compute_metrics:
-                eval_metric = self.compute_metrics((_predictions, _labels))
-                eval_metric = {k: v for k, v in eval_metric.items()}
-                pbar.set_postfix({k: v for k, v in eval_metric.items()})
+        if self.compute_metrics:
+            eval_metric = self.compute_metrics((_predictions, _labels))
+            eval_metric = {k: v for k, v in eval_metric.items()}
+            loader.set_postfix({k: v for k, v in eval_metric.items()})
 
         if initial_state is None:
             self.state = flax.jax_utils.unreplicate(state)
