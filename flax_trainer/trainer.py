@@ -1,32 +1,23 @@
-from .dataloader import BatchLoader
-from .utils import *
-
-from typing import Optional, Union, Callable, Dict, Any, List
-from packaging import version
-from functools import partial
 import importlib.util
 import inspect
+from functools import partial
+from typing import Optional, Union, Callable, Dict, Any, List
 
+import datasets
+import flax
 import jax
 import jax.numpy as jnp
-from jax.lax import pmean
-from jax import pmap, jit
-
-import flax
-from flax.jax_utils import unreplicate, replicate
-from flax.training.train_state import TrainState
-from flax.training.common_utils import onehot
-
-from optax import softmax_cross_entropy
-
 import torch
+from flax.jax_utils import unreplicate, replicate
+from flax.training.common_utils import onehot
+from flax.training.train_state import TrainState
+from jax import pmap, jit
+from jax.lax import pmean
+from optax import softmax_cross_entropy
+from packaging import version
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset, IterableDataset
-
-from transformers.trainer_pt_utils import IterableDatasetShard
-from transformers.trainer_utils import RemoveColumnsCollator, TrainerMemoryTracker, seed_worker
-from transformers.trainer_callback import DefaultFlowCallback, ProgressCallback
-from transformers.utils import find_labels
+from tqdm import tqdm
 from transformers import (
     TrainingArguments,
     DataCollator,
@@ -37,10 +28,13 @@ from transformers import (
     default_data_collator,
     DataCollatorWithPadding
 )
+from transformers.trainer_callback import DefaultFlowCallback, ProgressCallback
+from transformers.trainer_pt_utils import IterableDatasetShard
+from transformers.trainer_utils import RemoveColumnsCollator, TrainerMemoryTracker, seed_worker
+from transformers.utils import find_labels
 
-import datasets
-from tqdm import tqdm
-
+from .dataloader import BatchLoader
+from .utils import *
 
 logger = logging.get_logger(__name__)
 
@@ -107,9 +101,9 @@ class FlaxTrainer(object):
         self._memory_tracker.stop_and_update_metrics()
 
     def train(self, resume_from_checkpoint: Optional[Union[str, bool]] = None,
-        trial: Union["optuna.Trial", Dict[str, Any]] = None,
-        ignore_keys_for_eval: Optional[List[str]] = None,
-        **kwargs):
+              trial: Union["optuna.Trial", Dict[str, Any]] = None,
+              ignore_keys_for_eval: Optional[List[str]] = None,
+              **kwargs):
         if resume_from_checkpoint is False:
             resume_from_checkpoint = None
 
@@ -306,6 +300,7 @@ class FlaxTrainerForMaskedLM(FlaxTrainer):
         dropout_rng, new_dropout_rng = jax.random.split(dropout_rng)
         labels = batch.pop("labels", None)
         label_mask = jnp.where(labels > 0, 1.0, 0.0)
+
         def loss_fn(params):
             logits = state.apply_fn(**batch, params=params, dropout_rng=dropout_rng, train=True)[0]
             onehot_labels = onehot(label_mask, logits.shape[-1])
@@ -322,6 +317,7 @@ class FlaxTrainerForCausalLM(FlaxTrainer):
     def train_step(self, state: TrainState, batch: Dict[str, jax.numpy.DeviceArray], dropout_rng):
         dropout_rng, new_dropout_rng = jax.random.split(dropout_rng)
         labels = batch.pop("labels", None)
+
         def loss_fn(params):
             logits = state.apply_fn(**batch, params=params, dropout_rng=dropout_rng, train=True)[0]
             shift_logits = logits[..., :-1, :]
