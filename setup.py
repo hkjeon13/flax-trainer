@@ -28,9 +28,9 @@ setup(
             "datasets",
             "evaluate",
             "optax",
-            "jax==0.4.2",
-            "jaxlib==0.4.2",
-            "flax",
+            "jax",
+            "jaxlib",
+            "flax=<0.64",
 
     ],
     classifiers=[
