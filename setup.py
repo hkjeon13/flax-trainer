@@ -28,7 +28,8 @@ setup(
             "datasets",
             "evaluate",
             "flax",
-            "jax==0.4.3",
+            "jax[cpu]==0.4.3",
+            "jax[cuda]==0.4.3",
             "jaxlib==0.4.3",
             "optax"
     ],
