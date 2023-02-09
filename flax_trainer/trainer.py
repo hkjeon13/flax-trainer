@@ -1,14 +1,16 @@
+from .dataloader import BatchLoader
+from .utils import *
+
 from typing import Optional, Union, Callable, Dict, Any, List
 from packaging import version
 from functools import partial
-from tqdm import tqdm
 import importlib.util
+import inspect
 
 import jax
 import jax.numpy as jnp
 from jax.lax import pmean
 from jax import pmap, jit
-
 
 import flax
 from flax.jax_utils import unreplicate, replicate
@@ -17,26 +19,14 @@ from flax.training.common_utils import onehot
 
 from optax import softmax_cross_entropy
 
-import datasets
-
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset, IterableDataset
 
 from transformers.trainer_pt_utils import IterableDatasetShard
-from transformers.trainer_utils import (
-    RemoveColumnsCollator,
-    TrainerMemoryTracker,
-    seed_worker
-)
-
-from transformers.trainer_callback import (
-    DefaultFlowCallback,
-    TrainerCallback,
-    ProgressCallback
-
-)
-
+from transformers.trainer_utils import RemoveColumnsCollator, TrainerMemoryTracker, seed_worker
+from transformers.trainer_callback import DefaultFlowCallback, ProgressCallback
+from transformers.utils import find_labels
 from transformers import (
     TrainingArguments,
     DataCollator,
@@ -48,8 +38,8 @@ from transformers import (
     DataCollatorWithPadding
 )
 
-from .dataloader import BatchLoader
-from .utils import *
+import datasets
+from tqdm import tqdm
 
 
 logger = logging.get_logger(__name__)
@@ -76,6 +66,10 @@ class FlaxTrainer(object):
                  **kwargs) -> None:
 
         self.model, self.args = model, args
+
+        self._signature_columns = None
+        default_label_names = find_labels(self.model.__class__)
+        self.label_names = default_label_names if self.args.label_names is None else self.args.label_names
 
         self.rng = jax.random.PRNGKey(rng_seed)
 
@@ -236,6 +230,14 @@ class FlaxTrainer(object):
             model_name=self.model.__class__.__name__,
         )
         return remove_columns_collator
+
+    def _set_signature_columns_if_needed(self):
+        if self._signature_columns is None:
+            # Inspect model forward signature to keep only the arguments it accepts.
+            signature = inspect.signature(self.model.forward)
+            self._signature_columns = list(signature.parameters.keys())
+            # Labels may be named label or label_ids, the default data collator handles that.
+            self._signature_columns += list(set(["label", "label_ids"] + self.label_names))
 
     def _remove_unused_columns(self, dataset: "datasets.Dataset", description: Optional[str] = None):
         if not self.args.remove_unused_columns:
