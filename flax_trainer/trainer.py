@@ -103,7 +103,7 @@ class FlaxTrainer(object):
               **kwargs):
         if self.train_dataset is not None:
             self.train_dataset = self._remove_unused_columns(self.train_dataset)
-
+        print("Train Dataset:", self.train_dataset)
         if resume_from_checkpoint is False:
             resume_from_checkpoint = None
 
