@@ -30,7 +30,7 @@ setup(
             "optax",
             "jax",
             "jaxlib",
-            "flax<=0.64",
+            "flax<=0.6.4",
 
     ],
     classifiers=[
