@@ -119,6 +119,7 @@ class FlaxTrainer(object):
                 parallel_train_step = pmap(self.train_step, "batch", donate_argnums=(0,))
                 with tqdm(total=len(train_batch_loader), desc="Training...", leave=True, position=0) as pbar:
                     for batch in train_batch_loader:
+                        print("BATCH:", batch)
                         state, train_metrics, dropout_rngs = parallel_train_step(state, batch, dropout_rngs)
                         u_append(train_metrics)
                         pbar.update(1)
