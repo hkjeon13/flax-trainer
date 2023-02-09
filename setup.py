@@ -27,7 +27,6 @@ setup(
             "transformers",
             "datasets",
             "evaluate",
-            "flax",
             "optax"
     ],
     classifiers=[
