@@ -2,4 +2,3 @@ transformers
 datasets
 flax
 jax
-jaxlib
