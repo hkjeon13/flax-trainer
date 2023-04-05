@@ -111,7 +111,8 @@ def main():
     trainer = FlaxTrainerForCausalLM(
         model=model,
         args=training_args,
-        train_dataset=dataset,
+        train_dataset=dataset[data_params.train_split],
+        eval_dataset=dataset[data_params.eval_split],
         tokenizer=tokenizer
     )
 
