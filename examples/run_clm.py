@@ -57,8 +57,8 @@ class DataParams:
         metadata={"help": "학습 데이터를 가지고 있는 split의 이름을 설정합니다."}
     )
 
-    eval_split: str = field(
-        default="validation",
+    eval_split: Optional[str] = field(
+        default='validation',
         metadata={"help": "평가 데이터를 가지고 있는 split의 이름을 설정합니다."}
     )
 
@@ -106,21 +106,22 @@ def main():
     if model_params.group_texts:
         dataset = dataset.map(group_texts, batched=True, remove_columns=dataset[data_params.train_split].column_names)
 
-    dataset.set_format(type="jax", columns=["input_ids", "attention_mask"])
+    dataset.set_format(type="jax", columns=["input_ids", "attention_mask", "labels"])
 
     trainer = FlaxTrainerForCausalLM(
         model=model,
         args=training_args,
         train_dataset=dataset[data_params.train_split],
-        eval_dataset=dataset[data_params.eval_split],
+        eval_dataset=dataset[data_params.eval_split] if data_params.eval_split is not None else None,
         tokenizer=tokenizer
     )
 
-    trainer.train()
+    if training_args.do_train:
+        trainer.train()
 
-    trainer.save_model()
-
-
+    elif training_args.do_eval:
+        trainer.evaluate()
+    from transformers import GPT2LMHeadModel
 if __name__ == "__main__":
     main()
 

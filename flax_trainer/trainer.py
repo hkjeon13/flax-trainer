@@ -113,9 +113,7 @@ class FlaxTrainer(object):
             for epoch in range(int(self.args.num_train_epochs)):
                 updates, dropout_rngs = [], jax.random.split(self.rng, jax.local_device_count())
                 u_append = updates.append
-
-                train_batch_loader = BatchLoader(self.train_dataset, self.args.per_device_eval_batch_size)
-
+                train_batch_loader = BatchLoader(self.train_dataset, self.args.per_device_train_batch_size)
                 parallel_train_step = pmap(self.train_step, "batch", donate_argnums=(0,))
                 loader = tqdm(train_batch_loader, total=len(train_batch_loader), desc="Training...", leave=True, position=0)
                 for batch in loader:
@@ -273,13 +271,12 @@ class FlaxTrainerForCausalLM(FlaxTrainer):
     def train_step(self, state: TrainState, batch: Dict[str, jax.numpy.DeviceArray], dropout_rng):
         dropout_rng, new_dropout_rng = jax.random.split(dropout_rng)
         labels = batch.pop("labels", None)
-
         def loss_fn(params):
             logits = state.apply_fn(**batch, params=params, dropout_rng=dropout_rng, train=True)[0]
             shift_logits = logits[..., :-1, :]
             shift_labels = labels[..., 1:]
-            onehot_labels = onehot(shift_logits, shift_labels.shape[-1])
-            return softmax_cross_entropy(logits, onehot_labels).mean()
+            onehot_labels = onehot(shift_labels, shift_logits.shape[-1])
+            return softmax_cross_entropy(shift_logits, onehot_labels).mean()
 
         loss, grad = jax.value_and_grad(loss_fn)(state.params)
         new_state = state.apply_gradients(grads=pmean(grad, "batch"))
