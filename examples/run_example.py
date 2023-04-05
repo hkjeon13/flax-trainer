@@ -1,5 +1,5 @@
 import jax.numpy as jnp
-from flax_trainer.trainer import FlaxTrainer
+from flax_trainer.trainer import FlaxTrainerForSequenceClassification
 from datasets import load_dataset, load_metric
 from dataclasses import dataclass, field
 from transformers import (
@@ -121,7 +121,7 @@ def main():
         preds = jnp.argmax(preds, axis=-1)
         return _metric.compute(predictions=preds, references=labels)
 
-    trainer = FlaxTrainer(
+    trainer = FlaxTrainerForSequenceClassification(
         model,
         args=train_args,
         train_dataset=dataset[data_args.train_split],
@@ -134,6 +134,7 @@ def main():
 
     elif train_args.do_eval:
         trainer.evaluate(dataset[data_args.eval_split])
+
 
 
 if __name__ == "__main__":
