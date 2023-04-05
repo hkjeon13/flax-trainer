@@ -1,2 +1,6 @@
 *.ini
 rm_ini.py
+runs/
+build
+dist/
+*.egg-info
