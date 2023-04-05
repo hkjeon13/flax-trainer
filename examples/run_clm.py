@@ -9,7 +9,8 @@ from transformers import (
     HfArgumentParser
 )
 
-
+from typing import Optional
+from itertools import chain
 @dataclass
 class ModelParams:
     model_name_or_path: str = field(
@@ -31,6 +32,12 @@ class ModelParams:
         metadata={"help": "최대 길이(max_length) 기준으로 텍스트를 그룹화 여부를 설정합니다."}
     )
 
+    block_size: Optional[int] = field(
+        default=None,
+        metadata={"help": "그룹화된 텍스트를 얼마나 크게 나눌지 설정합니다."}
+    )
+
+
 
 
 @dataclass
@@ -45,7 +52,15 @@ class DataParams:
         metadata={"help": "텍스트 데이터를 가지고 있는 컬럼의 이름을 설정합니다."}
     )
 
+    train_split: str = field(
+        default="train",
+        metadata={"help": "학습 데이터를 가지고 있는 split의 이름을 설정합니다."}
+    )
 
+    eval_split: str = field(
+        default="validation",
+        metadata={"help": "평가 데이터를 가지고 있는 split의 이름을 설정합니다."}
+    )
 
 
 def main():
@@ -57,33 +72,40 @@ def main():
 
     dataset = load_dataset(data_params.data_name_or_path)
 
-    def group_text(examples):
-        total_length = len(examples[data_params.text_column_name])
-        examples[data_params.text_column_name] = [
-            examples[data_params.text_column_name][i : i + model_params.max_length] for i in range(0, total_length, model_params.max_length)
-        ]
-        return examples
+    block_size = model_params.block_size if model_params.block_size is not None else model_params.max_length
 
     def tokenize_function(examples):
-        tokenized_inputs = tokenizer(
-            examples[data_params.text_column_name],
-            max_length=model_params.max_length,
-            truncation=True
-        )
+        tokenized_inputs = tokenizer(examples[data_params.text_column_name])
         tokenized_inputs["labels"] = tokenized_inputs["input_ids"].copy()
+        return tokenized_inputs
 
-    if model_params.group_texts:
-        dataset = dataset.map(group_text, batched=True)
-        dataset = dataset.map(
-            tokenize_function,
-            batched=True,
-        )
 
     dataset = dataset.map(
         tokenize_function,
-        remove_columns=dataset[data_params.text_column_name].column_names,
+        remove_columns=dataset[data_params.train_split].column_names,
         batched=True,
     )
+
+
+    def group_texts(examples):
+        # Concatenate all texts.
+        concatenated_examples = {k: list(chain(*examples[k])) for k in examples.keys()}
+        total_length = len(concatenated_examples[list(examples.keys())[0]])
+        # We drop the small remainder, we could add padding if the model supported it instead of this drop, you can
+        # customize this part to your needs.
+        if total_length >= block_size:
+            total_length = (total_length // block_size) * block_size
+        # Split by chunks of max_len.
+        result = {
+            k: [t[i : i + block_size] for i in range(0, total_length, block_size)]
+            for k, t in concatenated_examples.items()
+        }
+        result["labels"] = result["input_ids"].copy()
+        return result
+
+    if model_params.group_texts:
+        dataset = dataset.map(group_texts, batched=True, remove_columns=dataset[data_params.train_split].column_names)
+
     dataset.set_format(type="jax", columns=["input_ids", "attention_mask"])
 
     trainer = FlaxTrainerForCausalLM(
