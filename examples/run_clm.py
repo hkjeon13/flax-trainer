@@ -84,12 +84,12 @@ def main():
     dataset = load_dataset(data_params.data_name_or_path)
 
     if data_params.train_samples is not None:
-        dataset = dataset[data_params.train_split].select(
+        dataset[data_params.train_split] = dataset[data_params.train_split].select(
             range(min(data_params.train_samples, len(dataset[data_params.train_split])))
         )
 
     if data_params.eval_samples is not None:
-        dataset = dataset[data_params.eval_split].select(
+        dataset[data_params.eval_split] = dataset[data_params.eval_split].select(
             range(min(data_params.eval_samples, len(dataset[data_params.eval_split])))
         )
 
