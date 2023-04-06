@@ -1,7 +1,8 @@
-import jax.numpy as jnp
 from flax_trainer.trainer import FlaxTrainerForCausalLM
-from datasets import load_dataset, load_metric
-from dataclasses import dataclass, field
+from itertools import chain
+from typing import Optional
+
+from datasets import load_dataset
 from transformers import (
     AutoTokenizer,
     FlaxGPT2LMHeadModel,
@@ -9,8 +10,9 @@ from transformers import (
     HfArgumentParser
 )
 
-from typing import Optional
-from itertools import chain
+from flax_trainer.trainer import FlaxTrainerForCausalLM
+
+
 @dataclass
 class ModelParams:
     model_name_or_path: str = field(
@@ -62,6 +64,16 @@ class DataParams:
         metadata={"help": "평가 데이터를 가지고 있는 split의 이름을 설정합니다."}
     )
 
+    train_samples: int = field(
+        default=None,
+        metadata={"help": "학습 데이터의 샘플 수를 설정합니다."}
+    )
+
+    eval_samples: int = field(
+        default=None,
+        metadata={"help": "평가 데이터의 샘플 수를 설정합니다."}
+    )
+
 
 def main():
     parser = HfArgumentParser((ModelParams, DataParams, TrainingArguments))
@@ -72,13 +84,22 @@ def main():
 
     dataset = load_dataset(data_params.data_name_or_path)
 
-    block_size = model_params.block_size if model_params.block_size is not None else model_params.max_length
+    if data_params.train_samples is not None:
+        dataset = dataset.select(
+            range(min(data_params.train_samples, len(dataset[data_params.train_split]))),
+            split=data_params.train_split
+        )
+
+    if data_params.eval_samples is not None:
+        dataset = dataset.select(
+            range(min(data_params.eval_samples, len(dataset[data_params.eval_split]))),
+            split=data_params.eval_split
+        )
 
     def tokenize_function(examples):
         tokenized_inputs = tokenizer(examples[data_params.text_column_name])
         tokenized_inputs["labels"] = tokenized_inputs["input_ids"].copy()
         return tokenized_inputs
-
 
     dataset = dataset.map(
         tokenize_function,
@@ -86,6 +107,7 @@ def main():
         batched=True,
     )
 
+    _block_size = model_params.block_size if model_params.block_size is not None else model_params.max_length
 
     def group_texts(examples):
         # Concatenate all texts.
@@ -93,11 +115,11 @@ def main():
         total_length = len(concatenated_examples[list(examples.keys())[0]])
         # We drop the small remainder, we could add padding if the model supported it instead of this drop, you can
         # customize this part to your needs.
-        if total_length >= block_size:
-            total_length = (total_length // block_size) * block_size
+        if total_length >= _block_size:
+            total_length = (total_length // _block_size) * _block_size
         # Split by chunks of max_len.
         result = {
-            k: [t[i : i + block_size] for i in range(0, total_length, block_size)]
+            k: [t[i: i + _block_size] for i in range(0, total_length, _block_size)]
             for k, t in concatenated_examples.items()
         }
         result["labels"] = result["input_ids"].copy()
@@ -121,7 +143,8 @@ def main():
 
     elif training_args.do_eval:
         trainer.evaluate()
-    from transformers import GPT2LMHeadModel
+
+
 if __name__ == "__main__":
     main()
 

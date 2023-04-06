@@ -6,8 +6,8 @@ with open("README.md", mode="r", encoding="utf-8") as readme:
 
 setup(
     name='flax-trainer',
-    version="0.0.0.6",
-    description='Korean AI Project',
+    version="0.0.0.7",
+    description='Flax Trainer',
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/hkjeon13/flax-trainer",

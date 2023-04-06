@@ -110,12 +110,13 @@ class FlaxTrainer(object):
         state = replicate(self.state)
 
         try:
+            parallel_train_step = pmap(self.train_step, "batch", donate_argnums=(0,))
+
             for epoch in range(int(self.args.num_train_epochs)):
                 updates, dropout_rngs = [], jax.random.split(self.rng, jax.local_device_count())
                 u_append = updates.append
                 train_batch_loader = BatchLoader(self.train_dataset, self.args.per_device_train_batch_size)
-                parallel_train_step = pmap(self.train_step, "batch", donate_argnums=(0,))
-                loader = tqdm(train_batch_loader, total=len(train_batch_loader), desc="Training...", leave=True, position=0)
+                loader = tqdm(train_batch_loader, total=len(train_batch_loader), desc=f"Training at {epoch} epoch...", leave=True, position=0)
                 for batch in loader:
                     state, train_metrics, dropout_rngs = parallel_train_step(state, batch, dropout_rngs)
                     u_append(train_metrics)
