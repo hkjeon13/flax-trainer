@@ -17,6 +17,7 @@ class BatchLoader(object):
         if isinstance(self.dataset, (datasets.Dataset, datasets.IterableDataset)):
 
             for d in self.dataset.iter(batch_size=self.batch_size):
+                print("BATCH:::::", d)
                 yield d
 
         else:
