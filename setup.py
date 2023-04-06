@@ -6,7 +6,7 @@ with open("README.md", mode="r", encoding="utf-8") as readme:
 
 setup(
     name='flax-trainer',
-    version="0.0.0.7",
+    version="0.0.0.8",
     description='Flax Trainer',
     long_description=long_description,
     long_description_content_type="text/markdown",

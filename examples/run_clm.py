@@ -1,4 +1,3 @@
-from flax_trainer.trainer import FlaxTrainerForCausalLM
 from itertools import chain
 from typing import Optional
 
@@ -9,7 +8,7 @@ from transformers import (
     TrainingArguments,
     HfArgumentParser
 )
-
+from dataclasses import dataclass, field
 from flax_trainer.trainer import FlaxTrainerForCausalLM
 
 
@@ -85,16 +84,15 @@ def main():
     dataset = load_dataset(data_params.data_name_or_path)
 
     if data_params.train_samples is not None:
-        dataset = dataset.select(
-            range(min(data_params.train_samples, len(dataset[data_params.train_split]))),
-            split=data_params.train_split
+        dataset = dataset[data_params.train_split].select(
+            range(min(data_params.train_samples, len(dataset[data_params.train_split])))
         )
 
     if data_params.eval_samples is not None:
-        dataset = dataset.select(
-            range(min(data_params.eval_samples, len(dataset[data_params.eval_split]))),
-            split=data_params.eval_split
+        dataset = dataset[data_params.eval_split].select(
+            range(min(data_params.eval_samples, len(dataset[data_params.eval_split])))
         )
+
 
     def tokenize_function(examples):
         tokenized_inputs = tokenizer(examples[data_params.text_column_name])
