@@ -15,10 +15,8 @@ class BatchLoader(object):
 
     def __iter__(self):
         if isinstance(self.dataset, (datasets.Dataset, datasets.IterableDataset)):
-
             for d in self.dataset.iter(batch_size=self.batch_size):
-                print("BATCH:::::", d)
-                yield d
+                yield {k: shard(v) for k, v in d.items()}
 
         else:
             outputs, batch_len = defaultdict(list), 0
